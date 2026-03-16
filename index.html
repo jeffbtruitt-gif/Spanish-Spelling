@@ -406,9 +406,22 @@ body {
 
   <!-- ══════════ ADMIN PANEL (English for parents) ══════════ -->
   <div id="panel-admin" class="panel">
+
+    <!-- Weekly instructions box -->
+    <div style="background:rgba(255,215,64,0.07);border:1.5px solid rgba(255,215,64,0.3);border-radius:16px;padding:18px 20px;margin-bottom:20px;">
+      <p style="font-size:16px;font-weight:800;color:var(--gold);margin-bottom:12px;">📅 How to update the list each week</p>
+      <ol style="padding-left:20px;display:flex;flex-direction:column;gap:8px;">
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Open <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">index.html</code> on GitHub, click the pencil ✏️ to edit</li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Find the <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">GITHUB_LISTS</code> section <span style="color:var(--muted);">(clearly marked with a comment)</span></li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Copy/paste a new week block, fill in the words</li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Click <strong style="color:white;">Commit</strong> — done in about a minute ✅</li>
+      </ol>
+      <p style="font-size:12px;color:var(--muted);margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">Every device (phone, tablet, laptop) will see the new list automatically once you commit — no app updates needed.</p>
+    </div>
+
     <div class="admin-section">
       <h2>➕ Create New Spelling List</h2>
-      <p class="section-intro">Add a new weekly list of Spanish words or phrases. Students will practice spelling them from the <strong style="color:white;">Practicar</strong> tab. The newest list is automatically selected.</p>
+      <p class="section-intro">Use this to add a device-only list for testing. To share a list across all devices, edit <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">index.html</code> on GitHub instead.</p>
       <label class="lbl">List name <span style="color:var(--muted);font-weight:400;">(e.g. "Week 4 — Preterite verbs")</span></label>
       <input class="fi" type="text" id="new-name" placeholder="Enter list name..." style="margin-bottom:12px;">
       <label class="lbl">Words / phrases <span style="color:var(--muted);font-weight:400;">— one per line, paste from a document</span></label>
@@ -481,25 +494,84 @@ body {
   draw();
 })();
 
-// ── DATA ──
-var lists = [], activeId = null, editingId = null;
-try { lists = JSON.parse(localStorage.getItem('eo_lists') || '[]'); } catch(e) {}
-try { activeId = localStorage.getItem('eo_active') || null; } catch(e) {}
+// ════════════════════════════════════════════════════════════════
+//  ✏️  WEEKLY SPELLING LISTS — EDIT THIS SECTION EACH WEEK
+//
+//  HOW TO UPDATE:
+//  1. Edit the list(s) below — change the "name" and "words" array
+//  2. Save the file and commit it to GitHub
+//  3. Every device will see the new list within ~1 minute
+//
+//  RULES:
+//  • Each word/phrase goes in quotes, separated by commas
+//  • Phrases with spaces are fine: 'ayer bailé'
+//  • The LAST list in the array is treated as the current week
+//  • Keep old lists here so students can still review past weeks
+//  • Do NOT change the "id" values once created
+// ════════════════════════════════════════════════════════════════
+var GITHUB_LISTS = [
+  {
+    id: 'week-1',
+    name: 'Week 1 — Preterite verbs',
+    words: [
+      'ayer bailé',
+      'ayer jugué',
+      'anoche leí',
+      'anoche dormí',
+      'ya terminé',
+      'ya comí',
+      'ayer estudié',
+      'anoche pensé',
+      'ya fui',
+      'ya escribí'
+    ]
+  }
+  // ── ADD NEW WEEKS BELOW THIS LINE ──
+  // Copy the block above, paste it here, update the id/name/words.
+  // Example:
+  // ,{
+  //   id: 'week-2',
+  //   name: 'Week 2 — Vocabulary',
+  //   words: [
+  //     'la manzana',
+  //     'el perro',
+  //     'la escuela'
+  //   ]
+  // }
+];
+// ════════════════════════════════════════════════════════════════
+//  END OF WEEKLY EDIT SECTION — do not edit below this line
+// ════════════════════════════════════════════════════════════════
 
-if (!lists.length) {
-  lists.push({ id: 'demo', name: 'Example — Preterite verbs', created: Date.now(),
-    words: ['ayer bailé','ayer jugué','anoche leí','anoche dormí','ya terminé','ya comí','ayer estudié','anoche pensé','ya fui','ya escribí'] });
-  persist();
-}
-if (!activeId || !lists.find(function(l){return l.id===activeId;})) {
-  activeId = newestId(); persistActive();
+// ── DATA ──
+// Device-local lists (added via the Word Lists tab on this device only)
+var localLists = [], editingId = null;
+try { localLists = JSON.parse(localStorage.getItem('eo_local_lists') || '[]'); } catch(e) {}
+
+// Merge: GitHub lists always come first, then any device-local lists.
+// If a GitHub list id already exists locally, the GitHub version wins.
+var githubIds = GITHUB_LISTS.map(function(l){ return l.id; });
+var mergedLocalOnly = localLists.filter(function(l){ return githubIds.indexOf(l.id) === -1; });
+
+// Stamp GitHub lists with a created time based on their position so newest = last
+var lists = GITHUB_LISTS.map(function(l, i){
+  return { id: l.id, name: l.name, words: l.words, created: 1000 + i, fromGithub: true };
+}).concat(mergedLocalOnly);
+
+// Active list: default to the last GitHub list (current week)
+var activeId = null;
+try { activeId = localStorage.getItem('eo_active') || null; } catch(e) {}
+if (!activeId || !lists.find(function(l){ return l.id === activeId; })) {
+  // Default to the most recent GitHub list
+  activeId = GITHUB_LISTS[GITHUB_LISTS.length - 1].id;
+  persistActive();
 }
 
 function newestId() {
   if (!lists.length) return null;
   return lists.slice().sort(function(a,b){return b.created-a.created;})[0].id;
 }
-function persist() { try { localStorage.setItem('eo_lists', JSON.stringify(lists)); } catch(e) {} }
+function persist() { var local = lists.filter(function(l){ return !l.fromGithub; }); try { localStorage.setItem('eo_local_lists', JSON.stringify(local)); } catch(e) {} }
 function persistActive() { try { localStorage.setItem('eo_active', activeId||''); } catch(e) {} }
 
 // ── QUIZ STATE ──
@@ -664,7 +736,7 @@ function createList() {
   var words = raw.split(/\n+/).map(function(s){return s.trim().toLowerCase();}).filter(Boolean);
   if (!words.length) { flashMsg(msg, 'Please add at least one word or phrase.', false); return; }
   var id = 'l' + Date.now();
-  lists.push({ id: id, name: name, created: Date.now(), words: words });
+  lists.push({ id: id, name: name, created: Date.now(), words: words, fromGithub: false });
   activeId = id; persist(); persistActive();
   document.getElementById('new-name').value = '';
   document.getElementById('new-words').value = '';
@@ -673,6 +745,8 @@ function createList() {
 }
 
 function deleteList(id) {
+  var l = lists.find(function(x){return x.id===id;});
+  if (l && l.fromGithub) { alert('This list is from GitHub.\nEdit index.html on GitHub to remove it.'); return; }
   if (!confirm('Delete this list? This cannot be undone.')) return;
   lists = lists.filter(function(l){return l.id !== id;});
   if (activeId === id) { activeId = newestId(); persistActive(); }
@@ -682,6 +756,7 @@ function deleteList(id) {
 // ── EDIT MODAL ──
 function openEdit(id) {
   var l = lists.find(function(x){return x.id===id;}); if (!l) return;
+  if (l.fromGithub) { alert('This list is from GitHub.\nUpdate index.html on GitHub to edit it - all devices will see the change automatically.'); return; }
   editingId = id;
   document.getElementById('edit-name').value = l.name;
   document.getElementById('edit-words').value = l.words.join('\n');
