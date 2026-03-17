@@ -140,12 +140,35 @@ body {
 .sb-title { font-size: 15px; font-weight: 800; margin-bottom: 10px; }
 .sb-title.c { color: var(--green); }
 .sb-title.w { color: #ff6b6b; }
-.sb-item { font-size: 13px; margin-bottom: 8px; line-height: 1.4; }
+.sb-item { font-size: 13px; margin-bottom: 10px; line-height: 1.4; }
 .sb-item.c { color: #86efac; }
 .sb-item.w { color: #fca5a5; }
 .diff-ok { color: rgba(255,255,255,0.5); }
 .diff-bad { color: var(--red); font-weight: 900; text-decoration: underline; }
 .attempt { display: block; font-size: 12px; margin-top: 3px; color: rgba(255,255,255,0.35); }
+.wrong-entry { display: flex; align-items: flex-start; gap: 6px; }
+.wrong-detail { flex: 1; min-width: 0; }
+.wrong-word { font-weight: 800; color: #fca5a5; display: block; margin-bottom: 3px; }
+.wrong-typed-row { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+.wrong-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); white-space: nowrap; min-width: 52px; }
+.wrong-val { font-size: 12px; }
+.wrong-val.typed { color: #ff8a8a; }
+.wrong-val.correct { color: #86efac; }
+.retry-btn {
+  flex-shrink: 0;
+  background: rgba(255,215,64,0.15);
+  border: 1px solid rgba(255,215,64,0.4);
+  color: var(--gold);
+  font-size: 11px; font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: 'Nunito', sans-serif;
+  transition: background 0.15s;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.retry-btn:hover { background: rgba(255,215,64,0.3); }
 
 /* ── QUESTION CARD ── */
 .q-card {
@@ -575,7 +598,7 @@ function persist() { var local = lists.filter(function(l){ return !l.fromGithub;
 function persistActive() { try { localStorage.setItem('eo_active', activeId||''); } catch(e) {} }
 
 // ── QUIZ STATE ──
-var qItems=[], qIdx=0, typed='', score={good:[],bad:[]}, badTyped={}, listName='';
+var qItems=[], qIdx=0, typed='', score={good:[],bad:[]}, badTyped={}, listName='', qTotal=0;
 
 // ── KEYBOARD ──
 var ROWS = [
@@ -618,6 +641,12 @@ function buildKbd() {
   });
 }
 buildKbd();
+
+// Delegated listener for retry buttons in the wrong scoreboard
+document.getElementById('sb-wrong').addEventListener('click', function(e) {
+  var btn = e.target.closest('.retry-btn');
+  if (btn) retryWord(btn.getAttribute('data-retry'));
+});
 
 document.addEventListener('keydown', function(e) {
   if (document.getElementById('screen-quiz').style.display === 'none') return;
@@ -793,6 +822,7 @@ function startQuiz() {
   listName = list.name;
   qItems = list.words.slice().sort(function(){return Math.random()-0.5;});
   qIdx = 0; typed = ''; score = {good:[], bad:[]}; badTyped = {};
+  qTotal = qItems.length;
   document.getElementById('screen-start').style.display = 'none';
   document.getElementById('screen-results').style.display = 'none';
   document.getElementById('screen-quiz').style.display = 'block';
@@ -804,6 +834,7 @@ function redoWrong() {
   var bad = score.bad.slice(); if (!bad.length) return;
   qItems = bad.sort(function(){return Math.random()-0.5;});
   qIdx = 0; typed = ''; score = {good:[], bad:[]}; badTyped = {};
+  qTotal = qItems.length;
   document.getElementById('screen-results').style.display = 'none';
   document.getElementById('screen-quiz').style.display = 'block';
   renderScoreboards(); buildDots(); loadQuestion();
@@ -823,8 +854,9 @@ function updateDot(i, good) {
 
 function loadQuestion() {
   typed = ''; renderTyped();
-  document.getElementById('q-counter').textContent = 'Frase '+(qIdx+1)+' de '+qItems.length;
-  document.getElementById('pbar').style.width = (qIdx/qItems.length*100)+'%';
+  var answered = score.good.length + score.bad.length;
+  document.getElementById('q-counter').textContent = 'Frase '+(answered+1)+' de '+qTotal;
+  document.getElementById('pbar').style.width = (answered/qTotal*100)+'%';
   setTimeout(sayWord, 380);
 }
 
@@ -866,6 +898,27 @@ function renderTyped() {
 
 function norm(s) { return s.trim().toLowerCase().replace(/\s+/g,' '); }
 
+function retryWord(word) {
+  // Remove from bad list
+  score.bad = score.bad.filter(function(w){ return w !== word; });
+  delete badTyped[word];
+  // If quiz is still running, insert word as the very next question
+  var quizVisible = document.getElementById('screen-quiz').style.display !== 'none';
+  var resultsVisible = document.getElementById('screen-results').style.display !== 'none';
+  if (quizVisible) {
+    qItems.splice(qIdx, 0, word);
+    qTotal++;
+    buildDots();
+    renderScoreboards();
+  } else if (resultsVisible) {
+    // Re-enter quiz with just this word
+    qItems = [word]; qIdx = 0; typed = ''; qTotal = 1;
+    document.getElementById('screen-results').style.display = 'none';
+    document.getElementById('screen-quiz').style.display = 'block';
+    renderScoreboards(); buildDots(); loadQuestion();
+  }
+}
+
 function diffHTML(typed_s, correct_s) {
   var t = norm(typed_s), c = norm(correct_s), h = '';
   for (var i = 0; i < Math.max(t.length, c.length); i++) {
@@ -903,7 +956,18 @@ function renderScoreboards() {
   sw.innerHTML = score.bad.length
     ? score.bad.map(function(w){
         var at = badTyped[w]||'';
-        return '<div class="sb-item w">'+esc(w)+(at?'<span class="attempt">→ '+diffHTML(at,w)+'</span>':'')+'</div>';
+        var retryId = 'retry-'+w.replace(/[^a-z0-9]/gi,'_');
+        var html = '<div class="sb-item w"><div class="wrong-entry">'
+          + '<div class="wrong-detail">'
+          + '<span class="wrong-word">'+esc(w)+'</span>';
+        if (at) {
+          html += '<div class="wrong-typed-row"><span class="wrong-label">You wrote:</span><span class="wrong-val typed">'+esc(norm(at))+'</span></div>'
+               +  '<div class="wrong-typed-row"><span class="wrong-label">Correct:</span><span class="wrong-val correct">'+esc(norm(w))+'</span></div>';
+        }
+        html += '</div>'
+          + '<button class="retry-btn" data-retry="'+esc(w)+'">↩ Retry</button>'
+          + '</div></div>';
+        return html;
       }).join('')
     : '<span style="color:var(--muted);font-size:13px;">—</span>';
 }
@@ -924,9 +988,16 @@ function showResults() {
     redoEl.innerHTML = '<div class="redo-box"><h3>Practica estas frases:</h3>'
       + score.bad.map(function(w){
           var at = badTyped[w]||'';
-          return '<div style="margin-bottom:10px;"><span class="redo-word">'+esc(w)+'</span>'
-            +(at?'<span style="font-size:13px;color:rgba(255,255,255,0.38);"> → '+diffHTML(at,w)+'</span>':'')
-            +'</div>';
+          var html = '<div style="margin-bottom:12px;">'
+            + '<span class="redo-word">'+esc(w)+'</span>';
+          if (at) {
+            html += '<div style="margin-top:5px;padding:7px 10px;background:rgba(0,0,0,0.25);border-radius:8px;font-size:12px;">'
+              + '<div style="margin-bottom:3px;"><span style="color:var(--muted);font-weight:700;min-width:80px;display:inline-block;">You wrote:</span> <span style="color:#ff8a8a;">'+esc(norm(at))+'</span></div>'
+              + '<div><span style="color:var(--muted);font-weight:700;min-width:80px;display:inline-block;">Correct:</span> <span style="color:#86efac;">'+esc(norm(w))+'</span></div>'
+              + '</div>';
+          }
+          html += '</div>';
+          return html;
         }).join('') + '</div>';
     redoBtn.style.display = 'inline-block';
   } else { redoEl.innerHTML=''; redoBtn.style.display='none'; }
