@@ -434,17 +434,16 @@ body {
     <div style="background:rgba(255,215,64,0.07);border:1.5px solid rgba(255,215,64,0.3);border-radius:16px;padding:18px 20px;margin-bottom:20px;">
       <p style="font-size:16px;font-weight:800;color:var(--gold);margin-bottom:12px;">📅 How to update the list each week</p>
       <ol style="padding-left:20px;display:flex;flex-direction:column;gap:8px;">
-        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Open <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">index.html</code> on GitHub, click the pencil ✏️ to edit</li>
-        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Find the <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">GITHUB_LISTS</code> section <span style="color:var(--muted);">(clearly marked with a comment)</span></li>
-        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Copy/paste a new week block, fill in the words</li>
-        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Click <strong style="color:white;">Commit</strong> — done in about a minute ✅</li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Go to the <strong style="color:white;">Create New Spelling List</strong> section below</li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Enter a name (e.g. "Week 5 — Future tense") and paste in the words</li>
+        <li style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.6;">Click <strong style="color:white;">Create List</strong> — it saves to the database instantly ✅</li>
       </ol>
-      <p style="font-size:12px;color:var(--muted);margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">Every device (phone, tablet, laptop) will see the new list automatically once you commit — no app updates needed.</p>
+      <p style="font-size:12px;color:var(--muted);margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">Every device (phone, tablet, laptop) sees the new list immediately — no code changes needed.</p>
     </div>
 
     <div class="admin-section">
       <h2>➕ Create New Spelling List</h2>
-      <p class="section-intro">Use this to add a device-only list for testing. To share a list across all devices, edit <code style="background:rgba(255,255,255,0.1);padding:2px 7px;border-radius:6px;font-size:13px;">index.html</code> on GitHub instead.</p>
+      <p class="section-intro">Create a new list here — it will be saved to the database and visible to all users on any device instantly.</p>
       <label class="lbl">List name <span style="color:var(--muted);font-weight:400;">(e.g. "Week 4 — Preterite verbs")</span></label>
       <input class="fi" type="text" id="new-name" placeholder="Enter list name..." style="margin-bottom:12px;">
       <label class="lbl">Words / phrases <span style="color:var(--muted);font-weight:400;">— one per line, paste from a document</span></label>
@@ -480,7 +479,17 @@ body {
   </div>
 </div>
 
-<script>
+<script type="module">
+// ════════════════════════════════════════════════════════════════
+//  🔧 SUPABASE CONFIG — replace these two values with your own
+// ════════════════════════════════════════════════════════════════
+var SUPABASE_URL = 'https://kdelwwnpuuvgnamumhec.supabase.co';
+var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkZWx3d25wdXV2Z25hbXVtaGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMjA4MjgsImV4cCI6MjA5MTY5NjgyOH0.3bqeOQDYMXj7NTnafgW6xtOVNI0EWfEg25SxyBcMw0w';
+// ════════════════════════════════════════════════════════════════
+
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+var sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
 // ── STARFIELD ──
 (function(){
   var canvas = document.getElementById('stars');
@@ -570,35 +579,50 @@ var GITHUB_LISTS = [
 // ════════════════════════════════════════════════════════════════
 
 // ── DATA ──
-// Device-local lists (added via the Word Lists tab on this device only)
-var localLists = [], editingId = null;
-try { localLists = JSON.parse(localStorage.getItem('eo_local_lists') || '[]'); } catch(e) {}
-
-// Merge: GitHub lists always come first, then any device-local lists.
-// If a GitHub list id already exists locally, the GitHub version wins.
-var githubIds = GITHUB_LISTS.map(function(l){ return l.id; });
-var mergedLocalOnly = localLists.filter(function(l){ return githubIds.indexOf(l.id) === -1; });
+var editingId = null;
 
 // Stamp GitHub lists with a created time based on their position so newest = last
 var lists = GITHUB_LISTS.map(function(l, i){
   return { id: l.id, name: l.name, words: l.words, created: 1000 + i, fromGithub: true };
-}).concat(mergedLocalOnly);
+});
 
 // Active list: default to the last GitHub list (current week)
 var activeId = null;
 try { activeId = localStorage.getItem('eo_active') || null; } catch(e) {}
-if (!activeId || !lists.find(function(l){ return l.id === activeId; })) {
-  // Default to the most recent GitHub list
-  activeId = GITHUB_LISTS[GITHUB_LISTS.length - 1].id;
-  persistActive();
-}
 
 function newestId() {
   if (!lists.length) return null;
   return lists.slice().sort(function(a,b){return b.created-a.created;})[0].id;
 }
-function persist() { var local = lists.filter(function(l){ return !l.fromGithub; }); try { localStorage.setItem('eo_local_lists', JSON.stringify(local)); } catch(e) {} }
 function persistActive() { try { localStorage.setItem('eo_active', activeId||''); } catch(e) {} }
+
+// ── SUPABASE: Load all lists from DB and merge with GitHub lists ──
+async function loadSupabaseLists() {
+  try {
+    var res = await sb.from('Spanish Spelling Words').select('*').order('created_at', { ascending: true });
+    if (res.error) { console.error('Supabase load error:', res.error.message); return; }
+    var rows = res.data || [];
+    // Group rows by List_ID
+    var map = {};
+    rows.forEach(function(row) {
+      if (!map[row.List_ID]) map[row.List_ID] = { id: row.List_ID, name: row.List_Name, words: [], created: new Date(row.created_at).getTime(), fromGithub: false };
+      map[row.List_ID].words.push(row.Word);
+    });
+    // Merge: GitHub lists first (they override DB lists with same id), then DB-only lists
+    var githubIds = GITHUB_LISTS.map(function(l){ return l.id; });
+    Object.values(map).forEach(function(l) {
+      if (githubIds.indexOf(l.id) === -1) lists.push(l);
+    });
+  } catch(e) { console.error('Supabase fetch failed:', e); }
+  // Resolve active list
+  if (!activeId || !lists.find(function(l){ return l.id === activeId; })) {
+    activeId = GITHUB_LISTS[GITHUB_LISTS.length - 1].id;
+    persistActive();
+  }
+  renderPicker();
+  renderAdminList();
+}
+loadSupabaseLists();
 
 // ── QUIZ STATE ──
 var qItems=[], qIdx=0, typed='', score={good:[],bad:[]}, badTyped={}, listName='', qTotal=0;
@@ -760,7 +784,7 @@ function renderAdminList() {
   }).join('');
 }
 
-function createList() {
+async function createList() {
   var name = document.getElementById('new-name').value.trim();
   var raw = document.getElementById('new-words').value;
   var msg = document.getElementById('create-msg');
@@ -768,21 +792,31 @@ function createList() {
   var words = raw.split(/\n+/).map(function(s){return s.trim().toLowerCase();}).filter(Boolean);
   if (!words.length) { flashMsg(msg, 'Please add at least one word or phrase.', false); return; }
   var id = 'l' + Date.now();
-  lists.push({ id: id, name: name, created: Date.now(), words: words, fromGithub: false });
-  activeId = id; persist(); persistActive();
-  document.getElementById('new-name').value = '';
-  document.getElementById('new-words').value = '';
-  flashMsg(msg, 'List created and set as active!', true);
-  renderAdminList();
+  flashMsg(msg, 'Saving to database...', true);
+  try {
+    var rows = words.map(function(w) { return { List_ID: id, List_Name: name, Word: w, List: name }; });
+    var res = await sb.from('Spanish Spelling Words').insert(rows);
+    if (res.error) { flashMsg(msg, 'Error: ' + res.error.message, false); return; }
+    lists.push({ id: id, name: name, created: Date.now(), words: words, fromGithub: false });
+    activeId = id; persistActive();
+    document.getElementById('new-name').value = '';
+    document.getElementById('new-words').value = '';
+    flashMsg(msg, 'List saved and shared with all users! ✅', true);
+    renderAdminList();
+  } catch(e) { flashMsg(msg, 'Network error. Check your Supabase config.', false); }
 }
 
-function deleteList(id) {
+async function deleteList(id) {
   var l = lists.find(function(x){return x.id===id;});
   if (l && l.fromGithub) { alert('This list is from GitHub.\nEdit index.html on GitHub to remove it.'); return; }
-  if (!confirm('Delete this list? This cannot be undone.')) return;
-  lists = lists.filter(function(l){return l.id !== id;});
-  if (activeId === id) { activeId = newestId(); persistActive(); }
-  persist(); renderAdminList();
+  if (!confirm('Delete this list for ALL users? This cannot be undone.')) return;
+  try {
+    var res = await sb.from('Spanish Spelling Words').delete().eq('List_ID', id);
+    if (res.error) { alert('Delete failed: ' + res.error.message); return; }
+    lists = lists.filter(function(l){return l.id !== id;});
+    if (activeId === id) { activeId = newestId(); persistActive(); }
+    renderAdminList();
+  } catch(e) { alert('Network error during delete.'); }
 }
 
 // ── EDIT MODAL ──
@@ -797,7 +831,7 @@ function openEdit(id) {
 }
 function closeModal() { document.getElementById('modal').style.display = 'none'; editingId = null; }
 function modalBgClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
-function saveEdit() {
+async function saveEdit() {
   var msg = document.getElementById('edit-msg');
   var name = document.getElementById('edit-name').value.trim();
   var raw = document.getElementById('edit-words').value;
@@ -805,9 +839,18 @@ function saveEdit() {
   var words = raw.split(/\n+/).map(function(s){return s.trim().toLowerCase();}).filter(Boolean);
   if (!words.length) { flashMsg(msg, 'Need at least one word.', false); return; }
   var l = lists.find(function(x){return x.id===editingId;}); if (!l) return;
-  l.name = name; l.words = words; persist();
-  flashMsg(msg, 'Saved!', true);
-  setTimeout(function(){ closeModal(); renderAdminList(); renderPicker(); }, 900);
+  flashMsg(msg, 'Saving...', true);
+  try {
+    // Delete old rows, insert new ones
+    var delRes = await sb.from('Spanish Spelling Words').delete().eq('List_ID', editingId);
+    if (delRes.error) { flashMsg(msg, 'Error: ' + delRes.error.message, false); return; }
+    var rows = words.map(function(w) { return { List_ID: editingId, List_Name: name, Word: w, List: name }; });
+    var insRes = await sb.from('Spanish Spelling Words').insert(rows);
+    if (insRes.error) { flashMsg(msg, 'Error: ' + insRes.error.message, false); return; }
+    l.name = name; l.words = words;
+    flashMsg(msg, 'Saved for all users! ✅', true);
+    setTimeout(function(){ closeModal(); renderAdminList(); renderPicker(); }, 900);
+  } catch(e) { flashMsg(msg, 'Network error.', false); }
 }
 
 // ── QUIZ ──
@@ -1041,6 +1084,20 @@ function flashMsg(el, msg, good) {
   el.textContent = msg;
   setTimeout(function(){ el.textContent=''; }, 3500);
 }
+
+// ── EXPOSE FUNCTIONS TO WINDOW (required for type="module") ──
+window.goTab = goTab;
+window.startQuiz = startQuiz;
+window.showStart = showStart;
+window.redoWrong = redoWrong;
+window.setActive = setActive;
+window.createList = createList;
+window.deleteList = deleteList;
+window.openEdit = openEdit;
+window.closeModal = closeModal;
+window.modalBgClick = modalBgClick;
+window.saveEdit = saveEdit;
+window.sayWord = sayWord;
 
 // Init
 renderPicker();
