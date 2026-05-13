@@ -342,6 +342,72 @@ body {
 @keyframes fall { 0%{transform:translateY(-20px) rotate(0);opacity:1} 100%{transform:translateY(110vh) rotate(720deg);opacity:0} }
 @keyframes twk { 0%,100%{opacity:0} 50%{opacity:var(--op)} }
 
+/* ── RACE OVERLAY ── */
+#race-overlay {
+  position: fixed; inset: 0;
+  background: #050510;
+  z-index: 600;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column;
+  gap: 0;
+}
+#race-overlay.hidden { display: none; }
+#race-header {
+  width: 100%; max-width: 420px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px 6px;
+}
+.race-hud-title {
+  font-family: 'Fredoka One', cursive;
+  font-size: 1.4rem; color: var(--gold);
+  filter: drop-shadow(0 0 8px rgba(255,215,64,0.5));
+}
+.race-hud-lives { font-size: 1.4rem; letter-spacing: 3px; }
+.race-hud-dist {
+  font-family: 'Fredoka One', cursive;
+  font-size: 1rem; color: var(--blue);
+}
+#race-canvas {
+  display: block;
+  border: 2px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  touch-action: none;
+}
+#race-message {
+  font-family: 'Fredoka One', cursive;
+  font-size: 1.6rem;
+  color: white;
+  text-align: center;
+  margin-top: 10px;
+  min-height: 2.2rem;
+  filter: drop-shadow(0 0 12px rgba(255,215,64,0.6));
+}
+#race-controls-hint {
+  font-size: 13px; color: var(--muted);
+  text-align: center; margin-top: 6px;
+  letter-spacing: 0.03em;
+}
+/* mobile arrow buttons */
+#race-mobile-btns {
+  display: none;
+  gap: 24px; margin-top: 10px;
+}
+@media (pointer: coarse) {
+  #race-mobile-btns { display: flex; }
+  #race-controls-hint { display: none; }
+}
+.race-arrow-btn {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  border: 2px solid rgba(255,255,255,0.2);
+  color: white; font-size: 1.6rem;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+.race-arrow-btn:active { background: rgba(124,77,255,0.5); }
+
 /* ── START SCREEN LIST PICKER ── */
 .picker-card {
   border-radius: 14px;
@@ -479,7 +545,23 @@ body {
   </div>
 </div>
 
-<script type="module">
+<!-- RACE OVERLAY -->
+<div id="race-overlay" class="hidden">
+  <div id="race-header">
+    <div class="race-hud-title">🏁 ¡Carrera!</div>
+    <div class="race-hud-lives" id="race-lives">❤️❤️❤️</div>
+    <div class="race-hud-dist" id="race-dist">0m</div>
+  </div>
+  <canvas id="race-canvas" width="360" height="480"></canvas>
+  <div id="race-message"></div>
+  <div id="race-controls-hint">← → Arrow keys to dodge cones</div>
+  <div id="race-mobile-btns">
+    <div class="race-arrow-btn" id="btn-left">◀</div>
+    <div class="race-arrow-btn" id="btn-right">▶</div>
+  </div>
+</div>
+
+<script>
 // ════════════════════════════════════════════════════════════════
 //  🔧 SUPABASE CONFIG — replace these two values with your own
 // ════════════════════════════════════════════════════════════════
@@ -487,8 +569,57 @@ var SUPABASE_URL = 'https://kdelwwnpuuvgnamumhec.supabase.co';
 var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkZWx3d25wdXV2Z25hbXVtaGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMjA4MjgsImV4cCI6MjA5MTY5NjgyOH0.3bqeOQDYMXj7NTnafgW6xtOVNI0EWfEg25SxyBcMw0w';
 // ════════════════════════════════════════════════════════════════
 
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
-var sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Plain fetch wrapper — avoids Supabase JS client's internal postMessage/Headers cloning bug
+var sb = (function() {
+  function req(method, url, body) {
+    return fetch(url, {
+      method: method,
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: body != null ? JSON.stringify(body) : undefined
+    }).then(function(res) {
+      if (!res.ok) return res.text().then(function(t) {
+        return { data: null, error: { message: res.status + ': ' + t } };
+      });
+      return res.text().then(function(t) {
+        var data = null;
+        try { data = t ? JSON.parse(t) : []; } catch(e) { data = []; }
+        return { data: data, error: null };
+      });
+    }).catch(function(e) {
+      return { data: null, error: { message: e && e.message ? e.message : String(e) } };
+    });
+  }
+  return {
+    from: function(table) {
+      var base = SUPABASE_URL + '/rest/v1/' + encodeURIComponent(table);
+      return {
+        select: function() {
+          return {
+            order: function(col, opts) {
+              var dir = (opts && opts.ascending === false) ? 'desc' : 'asc';
+              return req('GET', base + '?select=*&order=' + col + '.' + dir, null);
+            }
+          };
+        },
+        insert: function(rows) {
+          return req('POST', base, rows);
+        },
+        delete: function() {
+          return {
+            eq: function(col, val) {
+              return req('DELETE', base + '?' + encodeURIComponent(col) + '=eq.' + encodeURIComponent(val), null);
+            }
+          };
+        }
+      };
+    }
+  };
+})();
 
 // ── STARFIELD ──
 (function(){
@@ -600,20 +731,19 @@ function persistActive() { try { localStorage.setItem('eo_active', activeId||'')
 async function loadSupabaseLists() {
   try {
     var res = await sb.from('Spanish Spelling Words').select('*').order('created_at', { ascending: true });
-    if (res.error) { console.error('Supabase load error:', res.error.message); return; }
-    var rows = res.data || [];
-    // Group rows by List_ID
-    var map = {};
-    rows.forEach(function(row) {
-      if (!map[row.List_ID]) map[row.List_ID] = { id: row.List_ID, name: row.List_Name, words: [], created: new Date(row.created_at).getTime(), fromGithub: false };
-      map[row.List_ID].words.push(row.Word);
-    });
-    // Merge: GitHub lists first (they override DB lists with same id), then DB-only lists
-    var githubIds = GITHUB_LISTS.map(function(l){ return l.id; });
-    Object.values(map).forEach(function(l) {
-      if (githubIds.indexOf(l.id) === -1) lists.push(l);
-    });
-  } catch(e) { console.error('Supabase fetch failed:', e); }
+    if (!res.error && res.data && res.data.length) {
+      var map = {};
+      res.data.forEach(function(row) {
+        if (!map[row.List_ID]) map[row.List_ID] = { id: row.List_ID, name: row.List_Name, words: [], created: new Date(row.created_at).getTime(), fromGithub: false };
+        map[row.List_ID].words.push(row.Word);
+      });
+      var githubIds = GITHUB_LISTS.map(function(l){ return l.id; });
+      Object.values(map).forEach(function(l) {
+        if (githubIds.indexOf(l.id) === -1) lists.push(l);
+      });
+    }
+    // silently ignore res.error or network failures — GitHub lists are always available
+  } catch(e) { /* network unavailable — GitHub lists still work fine */ }
   // Resolve active list
   if (!activeId || !lists.find(function(l){ return l.id === activeId; })) {
     activeId = GITHUB_LISTS[GITHUB_LISTS.length - 1].id;
@@ -796,7 +926,7 @@ async function createList() {
   try {
     var rows = words.map(function(w) { return { List_ID: id, List_Name: name, Word: w, List: name }; });
     var res = await sb.from('Spanish Spelling Words').insert(rows);
-    if (res.error) { flashMsg(msg, 'Error: ' + res.error.message, false); return; }
+    if (res.error) { flashMsg(msg, 'Error: ' + (res.error.message || 'Unknown error'), false); return; }
     lists.push({ id: id, name: name, created: Date.now(), words: words, fromGithub: false });
     activeId = id; persistActive();
     document.getElementById('new-name').value = '';
@@ -812,7 +942,7 @@ async function deleteList(id) {
   if (!confirm('Delete this list for ALL users? This cannot be undone.')) return;
   try {
     var res = await sb.from('Spanish Spelling Words').delete().eq('List_ID', id);
-    if (res.error) { alert('Delete failed: ' + res.error.message); return; }
+    if (res.error) { alert('Delete failed: ' + (res.error.message || 'Unknown error')); return; }
     lists = lists.filter(function(l){return l.id !== id;});
     if (activeId === id) { activeId = newestId(); persistActive(); }
     renderAdminList();
@@ -843,10 +973,10 @@ async function saveEdit() {
   try {
     // Delete old rows, insert new ones
     var delRes = await sb.from('Spanish Spelling Words').delete().eq('List_ID', editingId);
-    if (delRes.error) { flashMsg(msg, 'Error: ' + delRes.error.message, false); return; }
+    if (delRes.error) { flashMsg(msg, 'Error: ' + (delRes.error.message || 'Unknown error'), false); return; }
     var rows = words.map(function(w) { return { List_ID: editingId, List_Name: name, Word: w, List: name }; });
     var insRes = await sb.from('Spanish Spelling Words').insert(rows);
-    if (insRes.error) { flashMsg(msg, 'Error: ' + insRes.error.message, false); return; }
+    if (insRes.error) { flashMsg(msg, 'Error: ' + (insRes.error.message || 'Unknown error'), false); return; }
     l.name = name; l.words = words;
     flashMsg(msg, 'Saved for all users! ✅', true);
     setTimeout(function(){ closeModal(); renderAdminList(); renderPicker(); }, 900);
@@ -988,10 +1118,22 @@ function submit() {
     di++;
   });
   updateDot(qIdx, ok);
-  if (ok) { score.good.push(correct); showFbk(pickOkMsg(), true); spawnConfetti(); }
-  else { score.bad.push(correct); badTyped[correct] = typed; showFbk('Era: '+correct, false); }
-  renderScoreboards();
-  setTimeout(function(){ qIdx++; if (qIdx >= qItems.length) showResults(); else loadQuestion(); }, 2100);
+  if (ok) {
+    score.good.push(correct);
+    showFbk(pickOkMsg(), true);
+    spawnConfetti();
+    renderScoreboards();
+    // Launch race mini-game, then advance
+    setTimeout(function(){
+      startRace(correct, qItems, function(){
+        qIdx++; if (qIdx >= qItems.length) showResults(); else loadQuestion();
+      });
+    }, 900);
+  } else {
+    score.bad.push(correct); badTyped[correct] = typed; showFbk('Era: '+correct, false);
+    renderScoreboards();
+    setTimeout(function(){ qIdx++; if (qIdx >= qItems.length) showResults(); else loadQuestion(); }, 2100);
+  }
 }
 
 function renderScoreboards() {
@@ -1084,6 +1226,356 @@ function flashMsg(el, msg, good) {
   el.textContent = msg;
   setTimeout(function(){ el.textContent=''; }, 3500);
 }
+
+// ── RACE MINI-GAME: Cone Dodger ──
+function startRace(correctWord, wordList, onDone) {
+  var overlay  = document.getElementById('race-overlay');
+  var canvas   = document.getElementById('race-canvas');
+  var ctx      = canvas.getContext('2d');
+  var msgEl    = document.getElementById('race-message');
+  var livesEl  = document.getElementById('race-lives');
+  var distEl   = document.getElementById('race-dist');
+
+  overlay.classList.remove('hidden');
+
+  // ── Canvas size: fill width on mobile ──
+  var maxW = Math.min(window.innerWidth - 16, 360);
+  var W = maxW, H = Math.round(maxW * 480/360);
+  canvas.width = W; canvas.height = H;
+  var LANE_COUNT = 5;
+  var LANE_W = W / LANE_COUNT;
+
+  // ── Game state ──
+  var lives = 3, dead = false, finished = false;
+  var playerLane = 2;            // 0-4
+  var playerY = H - 90;
+  var playerX = LANE_W * playerLane + LANE_W/2;
+  var targetX  = playerX;
+  var MOVE_SPEED = LANE_W * 0.18;
+
+  var distance  = 0;
+  var GOAL_DIST = 600;           // meters to finish line
+  var speed     = 2.2;           // px/frame road scroll
+  var frameN    = 0;
+
+  // Road stripes
+  var stripes = [];
+  for (var i = 0; i < 8; i++) stripes.push({ y: i * (H/4) });
+
+  // Obstacles: { lane, y, hit }
+  var cones = [];
+  var coneTimer = 0;
+  var CONE_INTERVAL = 55; // frames between spawns (decreases with speed)
+
+  // Particles for hit effect
+  var particles = [];
+
+  // Input state
+  var keys = {};
+  var moveCooldown = 0;
+
+  // ── Input: keyboard ──
+  function onKeyDown(e) {
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowRight') e.preventDefault();
+    keys[e.key] = true;
+  }
+  function onKeyUp(e) { keys[e.key] = false; }
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup',   onKeyUp);
+
+  // ── Input: mobile buttons ──
+  var btnL = document.getElementById('btn-left');
+  var btnR = document.getElementById('btn-right');
+  var holdL = false, holdR = false;
+  function startL(e){ e.preventDefault(); holdL=true; }
+  function startR(e){ e.preventDefault(); holdR=true; }
+  function stopL()  { holdL=false; }
+  function stopR()  { holdR=false; }
+  btnL.addEventListener('touchstart', startL, {passive:false});
+  btnR.addEventListener('touchstart', startR, {passive:false});
+  btnL.addEventListener('touchend',   stopL);
+  btnR.addEventListener('touchend',   stopR);
+  btnL.addEventListener('mousedown',  function(e){ holdL=true; });
+  btnR.addEventListener('mousedown',  function(e){ holdR=true; });
+  window.addEventListener('mouseup',  function(){ holdL=false; holdR=false; });
+
+  // ── Input: swipe ──
+  var touchStartX = null;
+  canvas.addEventListener('touchstart', function(e){
+    touchStartX = e.touches[0].clientX;
+  }, {passive:true});
+  canvas.addEventListener('touchend', function(e){
+    if (touchStartX === null) return;
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 30) {
+      if (dx < 0 && playerLane > 0) playerLane--;
+      else if (dx > 0 && playerLane < LANE_COUNT-1) playerLane++;
+      targetX = LANE_W * playerLane + LANE_W/2;
+    }
+    touchStartX = null;
+  }, {passive:true});
+
+  // ── Helpers ──
+  function laneX(l) { return LANE_W * l + LANE_W/2; }
+
+  function spawnCone() {
+    // Pick a lane different from player's current lane (fair warning)
+    var lane;
+    do { lane = Math.floor(Math.random() * LANE_COUNT); } while(lane === playerLane && Math.random() > 0.25);
+    cones.push({ lane: lane, y: -40, hit: false });
+  }
+
+  function emitParticles(x, y) {
+    for (var i = 0; i < 10; i++) {
+      var angle = Math.random() * Math.PI * 2;
+      var spd   = 1.5 + Math.random() * 3;
+      particles.push({
+        x: x, y: y,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
+        life: 1, color: ['#ff5252','#ffd740','#ff4d9e'][Math.floor(Math.random()*3)]
+      });
+    }
+  }
+
+  function drawRoad() {
+    // Asphalt
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, W, H);
+
+    // Lane dividers
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (var l = 1; l < LANE_COUNT; l++) {
+      ctx.beginPath(); ctx.moveTo(l*LANE_W, 0); ctx.lineTo(l*LANE_W, H); ctx.stroke();
+    }
+
+    // Scrolling dashes
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.setLineDash([28, 24]);
+    ctx.lineWidth = 2;
+    for (var l = 1; l < LANE_COUNT; l++) {
+      ctx.beginPath(); ctx.moveTo(l*LANE_W, 0); ctx.lineTo(l*LANE_W, H); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Road edges
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(W,0); ctx.lineTo(W,H); ctx.stroke();
+  }
+
+  function drawFinishLine(yPos) {
+    if (yPos < 0 || yPos > H) return;
+    var sq = 14;
+    var cols = Math.ceil(W / sq);
+    for (var c = 0; c < cols; c++) {
+      ctx.fillStyle = (c % 2 === 0) ? 'white' : 'black';
+      ctx.fillRect(c * sq, yPos, sq, sq);
+      ctx.fillStyle = (c % 2 === 0) ? 'black' : 'white';
+      ctx.fillRect(c * sq, yPos + sq, sq, sq);
+    }
+  }
+
+  function drawCone(x, y, hit) {
+    if (hit) return;
+    var s = LANE_W * 0.38;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(x, y+s*0.55, s*0.45, s*0.12, 0, 0, Math.PI*2); ctx.fill();
+    // Body
+    ctx.fillStyle = '#ff5500';
+    ctx.beginPath(); ctx.moveTo(x, y-s*0.6); ctx.lineTo(x+s*0.4, y+s*0.4); ctx.lineTo(x-s*0.4, y+s*0.4); ctx.closePath(); ctx.fill();
+    // White stripe
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.moveTo(x-s*0.22, y+s*0.05); ctx.lineTo(x+s*0.22, y+s*0.05); ctx.lineTo(x+s*0.3, y+s*0.28); ctx.lineTo(x-s*0.3, y+s*0.28); ctx.closePath(); ctx.fill();
+    // Top
+    ctx.fillStyle = '#ff7700';
+    ctx.beginPath(); ctx.arc(x, y-s*0.55, s*0.1, 0, Math.PI*2); ctx.fill();
+  }
+
+  function drawCar(x, y, flash) {
+    var cw = LANE_W * 0.52, ch = cw * 1.7;
+    if (flash) { ctx.globalAlpha = 0.4 + 0.6*(Math.sin(frameN*0.8)>0?1:0); }
+    // Body
+    ctx.fillStyle = '#7c4dff';
+    ctx.beginPath(); ctx.roundRect(x-cw/2, y-ch/2, cw, ch, 8); ctx.fill();
+    // Windshield
+    ctx.fillStyle = 'rgba(180,220,255,0.7)';
+    ctx.beginPath(); ctx.roundRect(x-cw*0.32, y-ch*0.35, cw*0.64, ch*0.28, 4); ctx.fill();
+    // Rear window
+    ctx.fillStyle = 'rgba(180,220,255,0.5)';
+    ctx.beginPath(); ctx.roundRect(x-cw*0.28, y+ch*0.08, cw*0.56, ch*0.18, 3); ctx.fill();
+    // Wheels
+    ctx.fillStyle = '#222';
+    [[x-cw/2-3, y-ch*0.28],[x+cw/2+3, y-ch*0.28],[x-cw/2-3, y+ch*0.22],[x+cw/2+3, y+ch*0.22]].forEach(function(w){
+      ctx.beginPath(); ctx.roundRect(w[0]-5, w[1]-9, 10, 18, 3); ctx.fill();
+      ctx.fillStyle='#555'; ctx.beginPath(); ctx.roundRect(w[0]-3,w[1]-6,6,12,2); ctx.fill(); ctx.fillStyle='#222';
+    });
+    // Headlights
+    ctx.fillStyle='#fffab0';
+    ctx.beginPath(); ctx.ellipse(x-cw*0.28, y-ch/2+4, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x+cw*0.28, y-ch/2+4, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawParticles() {
+    particles.forEach(function(p){
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4*p.life, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    // Progress bar at top
+    var pct = Math.min(distance / GOAL_DIST, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, W, 6);
+    ctx.fillStyle = '#00e676';
+    ctx.fillRect(0, 0, W * pct, 6);
+
+    // Word label above car
+    ctx.font = 'bold 13px Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(playerX - 50, playerY - 65, 100, 22);
+    ctx.fillStyle = '#ffd740';
+    ctx.fillText(correctWord.length > 12 ? correctWord.substring(0,12)+'…' : correctWord, playerX, playerY - 49);
+  }
+
+  // ── Finish line Y position (scrolls into frame) ──
+  var finishLineY = H * 0.3 - (GOAL_DIST * (speed/60) * 60); // starts off screen top
+  // Simpler: track remaining distance and show finish line when close
+  var finishVisible = false;
+  var finishY = -100;
+
+  // ── Flash timer after hit ──
+  var flashTimer = 0;
+
+  // ── Countdown before start ──
+  var countDown = 3;
+  var countTimer = 0;
+  var started = false;
+  msgEl.textContent = '🚦 ¡Prepárate!';
+
+  // ── Main loop ──
+  var rafId;
+  function loop() {
+    rafId = requestAnimationFrame(loop);
+    frameN++;
+
+    ctx.clearRect(0, 0, W, H);
+    drawRoad();
+
+    // Countdown
+    if (!started) {
+      countTimer++;
+      var cd = 3 - Math.floor(countTimer / 40);
+      if (cd > 0) {
+        msgEl.textContent = '🚦 ' + cd + '...';
+      } else {
+        started = true;
+        msgEl.textContent = '← → ¡Esquiva los conos!';
+      }
+      drawCar(playerX, playerY, false);
+      drawHUD();
+      return;
+    }
+
+    if (dead || finished) {
+      drawCar(playerX, playerY, dead);
+      drawParticles();
+      particles.forEach(function(p){ p.x+=p.vx; p.y+=p.vy; p.life-=0.04; });
+      particles = particles.filter(function(p){ return p.life > 0; });
+      return;
+    }
+
+    // ── Update ──
+    distance += speed * 0.5;
+    distEl.textContent = Math.floor(distance) + 'm';
+    speed = 2.2 + (distance / GOAL_DIST) * 2.8; // ramps up
+
+    // Player movement
+    moveCooldown = Math.max(0, moveCooldown - 1);
+    if (moveCooldown === 0) {
+      var moved = false;
+      if ((keys['ArrowLeft'] || holdL) && playerLane > 0) {
+        playerLane--; targetX = laneX(playerLane); moved = true;
+      } else if ((keys['ArrowRight'] || holdR) && playerLane < LANE_COUNT-1) {
+        playerLane++; targetX = laneX(playerLane); moved = true;
+      }
+      if (moved) moveCooldown = 10;
+    }
+    playerX += (targetX - playerX) * 0.22;
+
+    // Cones
+    coneTimer++;
+    var spawnInterval = Math.max(28, CONE_INTERVAL - distance * 0.04);
+    if (coneTimer >= spawnInterval) { spawnCone(); coneTimer = 0; }
+
+    cones.forEach(function(c){ c.y += speed; });
+    cones = cones.filter(function(c){ return c.y < H + 50; });
+
+    // Collision
+    if (flashTimer > 0) flashTimer--;
+    cones.forEach(function(c){
+      if (c.hit) return;
+      var cx = laneX(c.lane);
+      var dx = Math.abs(playerX - cx);
+      var dy = Math.abs(playerY - c.y);
+      if (dx < LANE_W*0.38 && dy < 28) {
+        c.hit = true;
+        lives--;
+        flashTimer = 35;
+        emitParticles(cx, c.y);
+        livesEl.textContent = ['❤️','❤️','❤️'].slice(0, Math.max(lives,0)).join('') || '💀';
+        if (lives <= 0) {
+          dead = true;
+          msgEl.textContent = '💥 ¡Ay! ¡Lo hiciste bien de todas formas!';
+          setTimeout(function(){ endRace(); }, 2200);
+        }
+      }
+    });
+
+    // Finish line
+    var remaining = GOAL_DIST - distance;
+    if (remaining < 120) {
+      finishY = H * 0.25 - (remaining * 1.4);
+      drawFinishLine(finishY);
+      if (finishY >= playerY - 30 && !finished) {
+        finished = true;
+        msgEl.textContent = '🏆 ¡Llegaste! ¡' + correctWord + '!';
+        spawnConfetti(28);
+        setTimeout(function(){ endRace(); }, 2000);
+      }
+    }
+
+    // Draw
+    cones.forEach(function(c){ drawCone(laneX(c.lane), c.y, c.hit); });
+    drawParticles();
+    particles.forEach(function(p){ p.x+=p.vx; p.y+=p.vy; p.life-=0.035; });
+    particles = particles.filter(function(p){ return p.life>0; });
+    drawCar(playerX, playerY, flashTimer > 0);
+    drawHUD();
+  }
+
+  function endRace() {
+    cancelAnimationFrame(rafId);
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keyup',   onKeyUp);
+    btnL.removeEventListener('touchstart', startL);
+    btnR.removeEventListener('touchstart', startR);
+    overlay.classList.add('hidden');
+    if (onDone) onDone();
+  }
+
+  loop();
+}
+
+window.startRace = startRace;
 
 // ── EXPOSE FUNCTIONS TO WINDOW (required for type="module") ──
 window.goTab = goTab;
